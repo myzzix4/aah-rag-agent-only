@@ -1,0 +1,63 @@
+# AAH Deployment Manifest — agent-only sample (AWS Native)
+#
+# 단일 Agent 서비스. AgentCore Runtime 위에 ReAct loop + Anthropic native
+# tool_use 패턴. 외부 의존성은 모두 AWS Bedrock + Databricks Custom Serving
+# (선택). RDS/OpenSearch/Redis 같은 인프라 컨테이너 제거 — 진짜 운영 단순화.
+#
+# 도구 (LLM 이 자동 선택):
+#   - retrieve_bedrock_kb        : Bedrock Knowledge Base 검색
+#   - retrieve_databricks_kb     : Databricks Vector Search (bge-m3, 한국어 강함)
+# env BEDROCK_KB_ID / DBX_* 가 비어있으면 해당 도구는 비활성화 → 컨테이너 자동
+# graceful degradation.
+
+apiVersion: aah.dev/v1
+kind: AgentDeployment
+
+metadata:
+  name: aah-rag-agent-only
+  display_name: RAG Agent (AWS Native, single service)
+  description: |
+    AgentCore Runtime 단일 컨테이너. ReAct loop + 두 가지 KB 도구 (Bedrock KB
+    + Databricks bge-m3) + AgentCore Memory 멀티턴. 진짜 운영용 단순화 샘플.
+  domain: general
+  tags: [aws-native, single-service, react, bedrock-kb, databricks]
+
+services:
+  - id: agent
+    kind: agent_runtime
+    target: agentcore_runtime
+    dockerfile: ./services/agent/Dockerfile
+    protocol: HTTP
+    port: 8080
+    health_path: /ping
+    invoke_path: /invocations
+    network_mode: PUBLIC
+
+resources:
+  # 멀티턴 대화 — 진짜 자동 프로비저닝 (provisioning.py가 처리)
+  - id: conversation_memory
+    kind: agentcore_memory
+    description: 대화 컨텍스트 보존 (USER + ASSISTANT 이벤트 저장)
+    required: true
+    consumed_by: [agent]
+    env:
+      memory_id: AGENTCORE_MEMORY_ID
+
+# 사용자가 NewModal에서 직접 박는 env (KB ARN/ID 같은 외부 자원).
+# 비워두면 컨테이너가 해당 도구 자동 skip.
+env_by_service:
+  agent:
+    - { name: LLM_MODEL_ID,          default: "anthropic.claude-sonnet-4-6" }
+    - { name: BEDROCK_KB_ID,         default: "" }              # 예: GZBQHKQ2OO
+    - { name: BEDROCK_KB_REGION,     default: "us-east-1" }
+    - { name: DBX_HOST,              default: "" }              # 예: https://dbc-xxx.cloud.databricks.com
+    - { name: DBX_TOKEN,             default: "" }              # PAT
+    - { name: DBX_INDEX_NAME,        default: "" }              # 예: workspace.default.aah_kb_bgem3_idx
+    - { name: DBX_EMBED_ENDPOINT,    default: "" }              # 예: aah-bge-m3 (비어있으면 auto-embed)
+    - { name: DBX_SSL_VERIFY,        default: "true" }
+    - { name: LOG_LEVEL,             default: "INFO" }
+
+# IAM role 에 박힐 Bedrock 모델 (사용자가 NewModal에서 추가 가능)
+bedrock_models:
+  - anthropic.claude-sonnet-4-6
+  - anthropic.claude-haiku-4-5
